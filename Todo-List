@@ -1,0 +1,158 @@
+// Simple Todo List in Clarity - Shows basic language features
+
+// Basic types that prevent invalid states
+type TodoId = Number where value > 0
+type NonEmptyText = String where length > 0
+
+// Todo status - can only be these three states
+type Status = Pending | InProgress | Done
+
+// A todo item
+type Todo = {
+    id: TodoId,
+    text: NonEmptyText,
+    status: Status,
+    created_at: String
+}
+
+// Simple error handling
+type TodoError = 
+    | TodoNotFound(id: TodoId)
+    | EmptyText
+    | InvalidStatus
+
+// Todo manager with a simple in-memory list
+module TodoManager:
+    let mut todos: List<Todo> = []
+    let mut next_id: Number = 1
+    
+    // Add a new todo - can't add empty text
+    function add_todo(text: String) -> Result<Todo, TodoError>:
+        if text.length == 0:
+            Error(EmptyText)
+        else:
+            let todo = Todo {
+                id: TodoId(next_id),
+                text: NonEmptyText(text),  // Safe because we checked length
+                status: Status.Pending,
+                created_at: current_time()
+            }
+            
+            with mut todos, next_id:
+                todos.append(todo)
+                next_id += 1
+            
+            Success(todo)
+    
+    // Find a todo by ID
+    function find_todo(id: TodoId) -> Result<Todo, TodoError>:
+        match todos.find(t -> t.id == id):
+            Some(todo) -> Success(todo)
+            None -> Error(TodoNotFound(id))
+    
+    // Update todo status
+    function update_status(id: TodoId, new_status: Status) -> Result<Todo, TodoError>:
+        let todo = find_todo(id)?  // ? means "return error if this fails"
+        
+        let updated_todo = todo.with { status: new_status }
+        
+        with mut todos:
+            // Replace the old todo with updated one
+            todos = todos.map(t -> if t.id == id then updated_todo else t)
+        
+        Success(updated_todo)
+    
+    // Get all todos
+    function get_all_todos() -> List<Todo>:
+        todos
+    
+    // Get todos by status
+    function get_todos_by_status(status: Status) -> List<Todo>:
+        todos.filter(t -> t.status == status)
+    
+    // Delete a todo
+    function delete_todo(id: TodoId) -> Result<(), TodoError>:
+        if todos.any(t -> t.id == id):
+            with mut todos:
+                todos = todos.filter(t -> t.id != id)
+            Success(())
+        else:
+            Error(TodoNotFound(id))
+
+// Helper function
+function current_time() -> String:
+    "2024-01-15 10:30:00"  // Simplified for example
+
+// Simple usage example
+function main():
+    print("=== Todo List Demo ===")
+    
+    // Add some todos
+    match TodoManager.add_todo("Buy groceries"):
+        Success(todo) -> print("Added: {todo.text}")
+        Error(EmptyText) -> print("Error: Cannot add empty todo")
+        Error(err) -> print("Error: {err}")
+    
+    match TodoManager.add_todo("Write code"):
+        Success(todo) -> print("Added: {todo.text}")
+        Error(err) -> print("Error: {err}")
+    
+    // Try to add empty todo - this will fail
+    match TodoManager.add_todo(""):
+        Success(todo) -> print("Added: {todo.text}")
+        Error(EmptyText) -> print("Cannot add empty todo!")
+        Error(err) -> print("Error: {err}")
+    
+    print("\n=== All Todos ===")
+    for todo in TodoManager.get_all_todos():
+        print("{todo.id}: {todo.text} [{todo.status}]")
+    
+    // Update a todo status
+    match TodoManager.update_status(TodoId(1), Status.InProgress):
+        Success(todo) -> print("Updated todo {todo.id} to {todo.status}")
+        Error(TodoNotFound(id)) -> print("Todo {id} not found")
+        Error(err) -> print("Error: {err}")
+    
+    // Try to update non-existent todo
+    match TodoManager.update_status(TodoId(999), Status.Done):
+        Success(todo) -> print("Updated: {todo.text}")
+        Error(TodoNotFound(id)) -> print("Todo {id} doesn't exist")
+        Error(err) -> print("Error: {err}")
+    
+    print("\n=== Pending Todos ===")
+    for todo in TodoManager.get_todos_by_status(Status.Pending):
+        print("- {todo.text}")
+    
+    print("\n=== In Progress Todos ===")
+    for todo in TodoManager.get_todos_by_status(Status.InProgress):
+        print("- {todo.text}")
+
+// Simple tests
+test "adding todos":
+    let result = TodoManager.add_todo("Test task")
+    match result:
+        Success(todo) -> {
+            assert todo.text == "Test task"
+            assert todo.status == Status.Pending
+            assert todo.id == TodoId(1)
+        }
+        Error(_) -> assert false, "Should succeed"
+
+test "empty text validation":
+    match TodoManager.add_todo(""):
+        Success(_) -> assert false, "Should fail with empty text"
+        Error(EmptyText) -> assert true  // Expected
+        Error(_) -> assert false, "Wrong error type"
+
+test "status updates":
+    let todo = TodoManager.add_todo("Update test").unwrap()
+    
+    match TodoManager.update_status(todo.id, Status.Done):
+        Success(updated) -> assert updated.status == Status.Done
+        Error(_) -> assert false, "Update should succeed"
+
+test "todo not found":
+    match TodoManager.update_status(TodoId(999), Status.Done):
+        Success(_) -> assert false, "Should fail for non-existent todo"
+        Error(TodoNotFound(id)) -> assert id == TodoId(999)
+        Error(_) -> assert false, "Wrong error type"
